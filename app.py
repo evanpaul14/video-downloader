@@ -2,6 +2,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import uuid
@@ -25,30 +26,61 @@ FORMAT_ARGS = {
 }
 
 
-def run_download(job_id: str, url: str, fmt: str):
+def _js_runtime_args():
+    for rt in ("node", "nodejs", "deno"):
+        path = shutil.which(rt)
+        if path:
+            return ["--js-runtimes", f"{rt}:{path}"]
+    return []
+
+
+def run_download(job_id: str, url: str, fmt: str, no_playlist: bool = False):
     q = jobs[job_id]["queue"]
 
     def emit(event: str, data: dict):
         q.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
 
     args = FORMAT_ARGS.get(fmt, FORMAT_ARGS["best"])
-    cmd = ["yt-dlp", "--newline", "--progress", *args, "-o", str(DOWNLOADS_DIR / "%(title)s.%(ext)s"), url]
+    playlist_flag = ["--no-playlist"] if no_playlist else []
+    cmd = [
+        "yt-dlp", "--newline", "--progress",
+        *_js_runtime_args(),
+        *args,
+        *playlist_flag,
+        "-o", str(DOWNLOADS_DIR / "%(title)s.%(ext)s"),
+        url,
+    ]
 
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+        )
+        jobs[job_id]["proc"] = proc
         filename = None
         for line in proc.stdout:
+            if jobs[job_id].get("cancelled"):
+                break
             line = line.strip()
             m = re.search(r"(\d+\.?\d*)%\s+of\s+([\d\.]+\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)", line)
             if m:
-                emit("progress", {"percent": float(m.group(1)), "size": m.group(2), "speed": m.group(3), "eta": m.group(4)})
+                emit("progress", {
+                    "percent": float(m.group(1)),
+                    "size":    m.group(2),
+                    "speed":   m.group(3),
+                    "eta":     m.group(4),
+                })
                 continue
-            dm = re.search(r"\[(?:download|ffmpeg|Merger)\]\s+(?:Destination:|Merging formats into) \"?(.+?)\"?$", line)
+            dm = re.search(
+                r"\[(?:download|ffmpeg|Merger)\]\s+(?:Destination:|Merging formats into) \"?(.+?)\"?$",
+                line,
+            )
             if dm:
                 filename = dm.group(1)
             emit("log", {"text": line})
         proc.wait()
-        if proc.returncode == 0:
+        if jobs[job_id].get("cancelled"):
+            emit("error", {"text": "Download cancelled."})
+        elif proc.returncode == 0:
             emit("done", {"filename": os.path.basename(filename) if filename else None})
         else:
             emit("error", {"text": "yt-dlp exited with an error."})
@@ -103,7 +135,13 @@ class Handler(BaseHTTPRequestHandler):
             q = jobs[job_id]["queue"]
             try:
                 while True:
-                    item = q.get()
+                    try:
+                        item = q.get(timeout=20)
+                    except queue.Empty:
+                        # Keepalive comment — prevents proxy/browser from closing idle SSE connections
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                        continue
                     if item is None:
                         break
                     self.wfile.write(item.encode())
@@ -135,20 +173,37 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
-        if urlparse(self.path).path != "/api/download":
+        path = urlparse(self.path).path
+
+        if path == "/api/download":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+            url = (body.get("url") or "").strip()
+            fmt = body.get("format", "best")
+            no_playlist = bool(body.get("no_playlist", False))
+            if not url:
+                self.send_json({"error": "URL is required"}, 400)
+                return
+            job_id = str(uuid.uuid4())
+            jobs[job_id] = {"queue": queue.Queue(), "cancelled": False}
+            threading.Thread(
+                target=run_download, args=(job_id, url, fmt, no_playlist), daemon=True
+            ).start()
+            self.send_json({"job_id": job_id})
+
+        elif path.startswith("/api/cancel/"):
+            job_id = path[len("/api/cancel/"):]
+            if job_id not in jobs:
+                self.send_json({"error": "Job not found"}, 404)
+                return
+            jobs[job_id]["cancelled"] = True
+            proc = jobs[job_id].get("proc")
+            if proc and proc.poll() is None:
+                proc.terminate()
+            self.send_json({"ok": True})
+
+        else:
             self.send_json({"error": "Not found"}, 404)
-            return
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length))
-        url = (body.get("url") or "").strip()
-        fmt = body.get("format", "best")
-        if not url:
-            self.send_json({"error": "URL is required"}, 400)
-            return
-        job_id = str(uuid.uuid4())
-        jobs[job_id] = {"queue": queue.Queue()}
-        threading.Thread(target=run_download, args=(job_id, url, fmt), daemon=True).start()
-        self.send_json({"job_id": job_id})
 
 
 if __name__ == "__main__":
