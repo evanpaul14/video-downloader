@@ -72,6 +72,7 @@ def run_download(job_id: str, url: str, quality: str, fmt: str, no_playlist: boo
         )
         jobs[job_id]["proc"] = proc
         filename = None
+        created_files: list[str] = []
         for line in proc.stdout:
             if jobs[job_id].get("cancelled"):
                 break
@@ -90,10 +91,16 @@ def run_download(job_id: str, url: str, quality: str, fmt: str, no_playlist: boo
                 line,
             )
             if dm:
+                created_files.append(dm.group(1))
                 filename = dm.group(1)
             emit("log", {"text": line})
         proc.wait()
         if jobs[job_id].get("cancelled"):
+            for f in created_files:
+                try:
+                    Path(f).unlink(missing_ok=True)
+                except OSError:
+                    pass
             emit("error", {"text": "Download cancelled."})
         elif proc.returncode == 0:
             emit("done", {"filename": os.path.basename(filename) if filename else None})
@@ -181,8 +188,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(filepath.stat().st_size))
             self.end_headers()
             with open(filepath, "rb") as fh:
-                while chunk := fh.read(65536):
-                    self.wfile.write(chunk)
+                try:
+                    while chunk := fh.read(65536):
+                        self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
         else:
             self.send_json({"error": "Not found"}, 404)
