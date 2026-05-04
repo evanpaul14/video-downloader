@@ -17,13 +17,29 @@ TEMPLATE = (Path(__file__).parent / "templates" / "index.html").read_bytes()
 
 jobs: dict[str, dict] = {}
 
-FORMAT_ARGS = {
-    "best":  ["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4"],
-    "1080":  ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]", "--merge-output-format", "mp4"],
-    "720":   ["-f", "bestvideo[height<=720]+bestaudio/best[height<=720]", "--merge-output-format", "mp4"],
-    "480":   ["-f", "bestvideo[height<=480]+bestaudio/best[height<=480]", "--merge-output-format", "mp4"],
-    "audio": ["-f", "bestaudio", "-x", "--audio-format", "mp3"],
+_VIDEO_QUALITY = {
+    "best": "bestvideo",
+    "4k":   "bestvideo[height<=2160]",
+    "1080": "bestvideo[height<=1080]",
+    "720":  "bestvideo[height<=720]",
+    "480":  "bestvideo[height<=480]",
+    "360":  "bestvideo[height<=360]",
 }
+
+_AUDIO_FORMATS = {"mp3", "aac", "m4a", "flac", "opus"}
+
+
+def _build_format_args(quality: str, fmt: str) -> list[str]:
+    if quality == "audio":
+        audio_fmt = fmt if fmt in _AUDIO_FORMATS else "mp3"
+        return ["-f", "bestaudio/best", "-x", "--audio-format", audio_fmt]
+    vf = _VIDEO_QUALITY.get(quality, "bestvideo")
+    if fmt == "webm":
+        return ["-f", f"{vf}[ext=webm]+bestaudio[ext=webm]/best", "--merge-output-format", "webm"]
+    elif fmt == "mkv":
+        return ["-f", f"{vf}+bestaudio/best", "--merge-output-format", "mkv"]
+    else:
+        return ["-f", f"{vf}+bestaudio/best", "--merge-output-format", "mp4"]
 
 
 def _js_runtime_args():
@@ -34,18 +50,17 @@ def _js_runtime_args():
     return []
 
 
-def run_download(job_id: str, url: str, fmt: str, no_playlist: bool = False):
+def run_download(job_id: str, url: str, quality: str, fmt: str, no_playlist: bool = False):
     q = jobs[job_id]["queue"]
 
     def emit(event: str, data: dict):
         q.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
 
-    args = FORMAT_ARGS.get(fmt, FORMAT_ARGS["best"])
     playlist_flag = ["--no-playlist"] if no_playlist else []
     cmd = [
         "yt-dlp", "--newline", "--progress",
         *_js_runtime_args(),
-        *args,
+        *_build_format_args(quality, fmt),
         *playlist_flag,
         "-o", str(DOWNLOADS_DIR / "%(title)s.%(ext)s"),
         url,
@@ -179,7 +194,8 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length))
             url = (body.get("url") or "").strip()
-            fmt = body.get("format", "best")
+            quality = body.get("quality", "best")
+            fmt = body.get("format", "mp4")
             no_playlist = bool(body.get("no_playlist", False))
             if not url:
                 self.send_json({"error": "URL is required"}, 400)
@@ -187,7 +203,7 @@ class Handler(BaseHTTPRequestHandler):
             job_id = str(uuid.uuid4())
             jobs[job_id] = {"queue": queue.Queue(), "cancelled": False}
             threading.Thread(
-                target=run_download, args=(job_id, url, fmt, no_playlist), daemon=True
+                target=run_download, args=(job_id, url, quality, fmt, no_playlist), daemon=True
             ).start()
             self.send_json({"job_id": job_id})
 
@@ -202,6 +218,25 @@ class Handler(BaseHTTPRequestHandler):
                 proc.terminate()
             self.send_json({"ok": True})
 
+        else:
+            self.send_json({"error": "Not found"}, 404)
+
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        if path.startswith("/api/files/"):
+            filename = unquote(path[len("/api/files/"):])
+            filepath = (DOWNLOADS_DIR / filename).resolve()
+            try:
+                filepath.relative_to(DOWNLOADS_DIR.resolve())
+            except ValueError:
+                self.send_json({"error": "Forbidden"}, 403)
+                return
+            if not filepath.is_file():
+                self.send_json({"error": "Not found"}, 404)
+                return
+            filepath.unlink()
+            self.send_json({"ok": True})
         else:
             self.send_json({"error": "Not found"}, 404)
 

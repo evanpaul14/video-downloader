@@ -222,6 +222,19 @@
 
     .dl-btn:hover { border-color: var(--accent); opacity: 1; background: var(--border); }
 
+    .del-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--error);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: 5px;
+      flex-shrink: 0;
+    }
+
+    .del-btn:hover { border-color: var(--error); background: rgba(248,113,113,.1); opacity: 1; }
+
     #empty-msg { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
 
     .section-header {
@@ -299,15 +312,29 @@
       <input type="checkbox" id="no-playlist" />
       Single video only (skip playlist)
     </label>
-    <label for="fmt-select">Format</label>
-    <div class="input-row">
-      <select id="fmt-select">
-        <option value="best">Best quality (video + audio)</option>
-        <option value="1080">1080p (video + audio)</option>
-        <option value="720">720p (video + audio)</option>
-        <option value="480">480p (video + audio)</option>
-        <option value="audio">Audio only (MP3)</option>
-      </select>
+    <div class="input-row" style="margin-bottom:14px;gap:10px">
+      <div style="flex:1;min-width:0">
+        <label for="quality-select" style="margin-bottom:6px">Quality</label>
+        <select id="quality-select" style="width:100%" onchange="updateFormatOptions()">
+          <option value="best">Best available</option>
+          <option value="4k">4K (2160p)</option>
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+          <option value="360">360p</option>
+          <option value="audio">Audio only</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:0">
+        <label for="format-select" style="margin-bottom:6px">Container</label>
+        <select id="format-select" style="width:100%">
+          <option value="mp4">MP4</option>
+          <option value="mkv">MKV</option>
+          <option value="webm">WebM</option>
+        </select>
+      </div>
+    </div>
+    <div class="input-row" style="justify-content:flex-end">
       <button id="dl-btn" onclick="startDownload()">Download</button>
     </div>
   </div>
@@ -345,11 +372,24 @@
     let currentSource = null;
     let currentJobId = null;
 
+    function updateFormatOptions() {
+      const quality = document.getElementById("quality-select").value;
+      const sel = document.getElementById("format-select");
+      const prev = sel.value;
+      if (quality === "audio") {
+        sel.innerHTML = '<option value="mp3">MP3</option><option value="aac">AAC</option><option value="m4a">M4A</option><option value="flac">FLAC</option>';
+      } else {
+        sel.innerHTML = '<option value="mp4">MP4</option><option value="mkv">MKV</option><option value="webm">WebM</option>';
+        if (sel.querySelector(`option[value="${prev}"]`)) sel.value = prev;
+      }
+    }
+
     async function startDownload() {
       const url = document.getElementById("url-input").value.trim();
       if (!url) { alert("Please enter a URL."); return; }
 
-      const fmt = document.getElementById("fmt-select").value;
+      const quality = document.getElementById("quality-select").value;
+      const fmt = document.getElementById("format-select").value;
       const noPlaylist = document.getElementById("no-playlist").checked;
       const btn = document.getElementById("dl-btn");
       const stopBtn = document.getElementById("stop-btn");
@@ -368,7 +408,7 @@
         res = await fetch("/api/download", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, format: fmt, no_playlist: noPlaylist }),
+          body: JSON.stringify({ url, quality, format: fmt, no_playlist: noPlaylist }),
         });
       } catch (e) {
         showStatus("Network error: " + e.message, "error");
@@ -501,8 +541,31 @@
           <span class="file-size">${fmtBytes(f.size)}</span>
           <a href="/downloads/${encodeURIComponent(f.name)}" class="dl-btn" download>Save</a>
         `;
+        const delBtn = document.createElement("button");
+        delBtn.className = "del-btn";
+        delBtn.textContent = "Delete";
+        delBtn.addEventListener("click", () => deleteFile(f.name, li));
+        li.appendChild(delBtn);
         list.appendChild(li);
       });
+    }
+
+    async function deleteFile(name, li) {
+      if (!confirm(`Delete "${name}"?`)) return;
+      try {
+        const res = await fetch(`/api/files/${encodeURIComponent(name)}`, { method: "DELETE" });
+        if (res.ok) {
+          li.remove();
+          if (!document.getElementById("file-list").children.length) {
+            document.getElementById("empty-msg").style.display = "block";
+          }
+        } else {
+          const data = await res.json();
+          alert(data.error || "Delete failed.");
+        }
+      } catch (e) {
+        alert("Network error: " + e.message);
+      }
     }
 
     function fmtBytes(b) {
