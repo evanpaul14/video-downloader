@@ -96,7 +96,7 @@ def run_download(job_id: str, url: str, quality: str, fmt: str,
         q.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
 
     playlist_flag = ["--no-playlist"] if no_playlist else []
-    sub_flags = ["--write-subs", "--write-auto-subs", "--sub-langs", "en.*", "--embed-subs"] if embed_subs else []
+    sub_flags = ["--write-subs", "--write-auto-subs", "--sub-langs", "en", "--convert-subs", "srt", "--embed-subs"] if embed_subs else []
     cookies_flags = ["--cookies", str(COOKIES_FILE.resolve())] if COOKIES_FILE.exists() else []
 
     cmd = [
