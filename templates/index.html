@@ -105,6 +105,24 @@
 
     select:focus { border-color: var(--accent); }
 
+    textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 11.5px;
+      padding: 10px 14px;
+      outline: none;
+      resize: vertical;
+      transition: border-color .15s;
+      min-height: 120px;
+    }
+
+    textarea:focus { border-color: var(--accent); }
+    textarea::placeholder { color: var(--muted); }
+
     button {
       background: var(--accent);
       border: none;
@@ -194,7 +212,7 @@
       justify-content: space-between;
       padding: 9px 0;
       border-bottom: 1px solid var(--border);
-      gap: 10px;
+      gap: 8px;
     }
 
     #file-list li:last-child { border-bottom: none; }
@@ -209,6 +227,19 @@
 
     .file-size { color: var(--muted); font-size: 12px; flex-shrink: 0; }
 
+    .play-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--success);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: 5px;
+      flex-shrink: 0;
+    }
+
+    .play-btn:hover { border-color: var(--success); background: rgba(74,222,128,.08); opacity: 1; }
+
     .dl-btn {
       background: transparent;
       border: 1px solid var(--border);
@@ -218,6 +249,9 @@
       padding: 5px 12px;
       border-radius: 5px;
       flex-shrink: 0;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
     }
 
     .dl-btn:hover { border-color: var(--accent); opacity: 1; background: var(--border); }
@@ -321,6 +355,143 @@
     }
 
     .progress-header label { margin-bottom: 0; }
+
+    /* Cookies section */
+    details.cookies-section {
+      margin-top: 14px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 0;
+    }
+
+    details.cookies-section summary {
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 10px 14px;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      user-select: none;
+    }
+
+    details.cookies-section summary::-webkit-details-marker { display: none; }
+    details.cookies-section summary::before {
+      content: "▶";
+      font-size: 9px;
+      transition: transform .15s;
+    }
+
+    details.cookies-section[open] summary::before { transform: rotate(90deg); }
+
+    .cookies-body {
+      padding: 0 14px 14px;
+    }
+
+    .cookies-status {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+      margin-left: auto;
+    }
+
+    .cookies-status.active {
+      color: var(--success);
+      background: rgba(74,222,128,.12);
+      border: 1px solid rgba(74,222,128,.25);
+    }
+
+    .cookies-status.inactive {
+      color: var(--muted);
+    }
+
+    .ghost-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 6px;
+    }
+
+    .ghost-btn:hover { color: var(--text); border-color: var(--accent); opacity: 1; }
+
+    .danger-ghost-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--error);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 6px;
+    }
+
+    .danger-ghost-btn:hover { border-color: var(--error); background: rgba(248,113,113,.08); opacity: 1; }
+
+    /* Media player modal */
+    #player-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.85);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    #player-modal.open { display: flex; }
+
+    .player-inner {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      width: 100%;
+      max-width: 860px;
+      position: relative;
+    }
+
+    .player-close {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .player-close:hover { color: var(--text); background: var(--border); opacity: 1; }
+
+    #player-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      padding-right: 40px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: 14px;
+    }
+
+    #player-container video,
+    #player-container audio {
+      width: 100%;
+      border-radius: 6px;
+      outline: none;
+      max-height: 65vh;
+    }
   </style>
 </head>
 <body>
@@ -338,6 +509,10 @@
     <label class="checkbox-row" for="no-playlist">
       <input type="checkbox" id="no-playlist" />
       Single video only (skip playlist)
+    </label>
+    <label class="checkbox-row" for="embed-subs">
+      <input type="checkbox" id="embed-subs" />
+      Subtitles (download &amp; embed into file)
     </label>
     <div class="input-row" style="margin-bottom:14px;gap:10px">
       <div style="flex:1;min-width:0">
@@ -361,7 +536,24 @@
         </select>
       </div>
     </div>
-    <div class="input-row" style="justify-content:flex-end">
+
+    <!-- Cookies section -->
+    <details class="cookies-section" id="cookies-details">
+      <summary>
+        Cookies
+        <span id="cookies-badge" class="cookies-status inactive">None</span>
+      </summary>
+      <div class="cookies-body">
+        <label style="margin-bottom:6px;margin-top:0">Paste cookies.txt content</label>
+        <textarea id="cookies-text" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	TRUE	..."></textarea>
+        <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+          <button class="ghost-btn" onclick="saveCookies()">Save Cookies</button>
+          <button class="danger-ghost-btn" onclick="clearCookies()">Clear</button>
+        </div>
+      </div>
+    </details>
+
+    <div class="input-row" style="justify-content:flex-end;margin-top:14px">
       <button id="dl-btn" onclick="startDownload()">Download</button>
     </div>
   </div>
@@ -395,11 +587,24 @@
     <p id="empty-msg" style="display:none">No files yet.</p>
   </div>
 
+  <!-- Media player modal -->
+  <div id="player-modal">
+    <div class="player-inner">
+      <button class="player-close" onclick="closePlayer()">&#x2715;</button>
+      <div id="player-title"></div>
+      <div id="player-container"></div>
+    </div>
+  </div>
+
   <script>
     let currentSource = null;
     let currentJobId = null;
     const hiddenFiles = new Set();
 
+    const AUDIO_EXTS = new Set(["mp3", "aac", "m4a", "flac", "opus", "wav", "ogg"]);
+    const PLAYABLE_EXTS = new Set(["mp4", "webm", "mp3", "aac", "m4a", "flac", "opus", "wav", "ogg"]);
+
+    // ── Format options ───────────────────────────────────────────────────────
     function updateFormatOptions() {
       const quality = document.getElementById("quality-select").value;
       const sel = document.getElementById("format-select");
@@ -412,6 +617,7 @@
       }
     }
 
+    // ── Download ─────────────────────────────────────────────────────────────
     async function startDownload() {
       const url = document.getElementById("url-input").value.trim();
       if (!url) { alert("Please enter a URL."); return; }
@@ -419,6 +625,7 @@
       const quality = document.getElementById("quality-select").value;
       const fmt = document.getElementById("format-select").value;
       const noPlaylist = document.getElementById("no-playlist").checked;
+      const embedSubs = document.getElementById("embed-subs").checked;
       const btn = document.getElementById("dl-btn");
       const stopBtn = document.getElementById("stop-btn");
 
@@ -436,7 +643,7 @@
         res = await fetch("/api/download", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, quality, format: fmt, no_playlist: noPlaylist }),
+          body: JSON.stringify({ url, quality, format: fmt, no_playlist: noPlaylist, embed_subs: embedSubs }),
         });
       } catch (e) {
         showStatus("Network error: " + e.message, "error");
@@ -512,7 +719,6 @@
 
       es.onerror = () => {
         if (finished) return;
-        // CONNECTING means EventSource is auto-reconnecting — let it retry
         if (es.readyState === EventSource.CONNECTING) return;
         showStatus("Connection lost.", "error");
         finalize();
@@ -554,6 +760,15 @@
       document.getElementById("status-msg").className = "";
     }
 
+    // ── File list ─────────────────────────────────────────────────────────────
+    async function loadHidden() {
+      try {
+        const res = await fetch("/api/hidden");
+        const data = await res.json();
+        (data.hidden || []).forEach(n => hiddenFiles.add(n));
+      } catch (_) {}
+    }
+
     async function loadFiles() {
       const res = await fetch("/api/files");
       const files = await res.json();
@@ -565,7 +780,8 @@
       empty.style.display = "none";
       visible.forEach(f => {
         const dotIdx = f.name.lastIndexOf(".");
-        const ext = dotIdx !== -1 ? f.name.slice(dotIdx + 1).toUpperCase() : "";
+        const ext = dotIdx !== -1 ? f.name.slice(dotIdx + 1).toLowerCase() : "";
+        const extUpper = ext.toUpperCase();
         const li = document.createElement("li");
 
         const hideBtn = document.createElement("button");
@@ -574,6 +790,11 @@
         hideBtn.textContent = "×";
         hideBtn.addEventListener("click", () => {
           hiddenFiles.add(f.name);
+          fetch("/api/hidden", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: f.name }),
+          }).catch(() => {});
           li.remove();
           if (!list.children.length) document.getElementById("empty-msg").style.display = "block";
         });
@@ -581,16 +802,31 @@
         li.appendChild(hideBtn);
         li.insertAdjacentHTML("beforeend", `
           <span class="file-name" title="${esc(f.name)}">${esc(f.name)}</span>
-          ${ext ? `<span class="file-ext">${esc(ext)}</span>` : ""}
+          ${extUpper ? `<span class="file-ext">${esc(extUpper)}</span>` : ""}
           <span class="file-size">${fmtBytes(f.size)}</span>
-          <a href="/downloads/${encodeURIComponent(f.name)}" class="dl-btn" download>Save</a>
         `);
+
+        if (PLAYABLE_EXTS.has(ext)) {
+          const playBtn = document.createElement("button");
+          playBtn.className = "play-btn";
+          playBtn.textContent = "Play";
+          playBtn.addEventListener("click", () => openPlayer(f.name, ext));
+          li.appendChild(playBtn);
+        }
+
+        const dlLink = document.createElement("a");
+        dlLink.href = `/downloads/${encodeURIComponent(f.name)}`;
+        dlLink.className = "dl-btn";
+        dlLink.download = f.name;
+        dlLink.textContent = "Save";
+        li.appendChild(dlLink);
 
         const delBtn = document.createElement("button");
         delBtn.className = "del-btn";
         delBtn.textContent = "Delete";
         delBtn.addEventListener("click", () => deleteFile(f.name, li));
         li.appendChild(delBtn);
+
         list.appendChild(li);
       });
     }
@@ -613,6 +849,84 @@
       }
     }
 
+    // ── Media player ─────────────────────────────────────────────────────────
+    function openPlayer(name, ext) {
+      const src = `/stream/${encodeURIComponent(name)}`;
+      const container = document.getElementById("player-container");
+      if (AUDIO_EXTS.has(ext)) {
+        container.innerHTML = `<audio controls autoplay><source src="${src}"></audio>`;
+      } else {
+        container.innerHTML = `<video controls autoplay><source src="${src}"></video>`;
+      }
+      document.getElementById("player-title").textContent = name;
+      document.getElementById("player-modal").classList.add("open");
+    }
+
+    function closePlayer() {
+      document.getElementById("player-modal").classList.remove("open");
+      // Stop playback by clearing the element
+      document.getElementById("player-container").innerHTML = "";
+    }
+
+    // Close on backdrop click
+    document.getElementById("player-modal").addEventListener("click", e => {
+      if (e.target === document.getElementById("player-modal")) closePlayer();
+    });
+
+    // ── Cookies ───────────────────────────────────────────────────────────────
+    function setCookiesBadge(active) {
+      const badge = document.getElementById("cookies-badge");
+      if (active) {
+        badge.textContent = "Active";
+        badge.className = "cookies-status active";
+      } else {
+        badge.textContent = "None";
+        badge.className = "cookies-status inactive";
+      }
+    }
+
+    async function loadCookiesStatus() {
+      try {
+        const res = await fetch("/api/cookies");
+        const data = await res.json();
+        setCookiesBadge(data.active);
+      } catch (_) {}
+    }
+
+    async function saveCookies() {
+      const content = document.getElementById("cookies-text").value.trim();
+      if (!content) { alert("Paste your cookies.txt content first."); return; }
+      try {
+        const res = await fetch("/api/cookies", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setCookiesBadge(true);
+          document.getElementById("cookies-text").value = "";
+          document.getElementById("cookies-details").removeAttribute("open");
+        } else {
+          alert(data.error || "Failed to save cookies.");
+        }
+      } catch (e) {
+        alert("Network error: " + e.message);
+      }
+    }
+
+    async function clearCookies() {
+      if (!confirm("Remove saved cookies?")) return;
+      try {
+        await fetch("/api/cookies", { method: "DELETE" });
+        setCookiesBadge(false);
+        document.getElementById("cookies-text").value = "";
+      } catch (e) {
+        alert("Network error: " + e.message);
+      }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
     function fmtBytes(b) {
       if (b > 1e9) return (b / 1e9).toFixed(1) + " GB";
       if (b > 1e6) return (b / 1e6).toFixed(1) + " MB";
@@ -629,7 +943,13 @@
       if (e.key === "Enter") startDownload();
     });
 
-    loadFiles();
+    // Close player on Escape
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") closePlayer();
+    });
+
+    // Init
+    Promise.all([loadHidden(), loadCookiesStatus()]).then(() => loadFiles());
   </script>
 </body>
 </html>

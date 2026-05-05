@@ -13,9 +13,13 @@ from urllib.parse import unquote, urlparse
 DOWNLOADS_DIR = Path("downloads")
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 
+COOKIES_FILE = Path("cookies.txt")
+HIDDEN_FILE = Path(".hidden_files.json")
+
 TEMPLATE = (Path(__file__).parent / "templates" / "index.html").read_bytes()
 
 jobs: dict[str, dict] = {}
+_hidden_lock = threading.Lock()
 
 _VIDEO_QUALITY = {
     "best": "bestvideo",
@@ -27,6 +31,40 @@ _VIDEO_QUALITY = {
 }
 
 _AUDIO_FORMATS = {"mp3", "aac", "m4a", "flac", "opus"}
+
+_MIME_TYPES = {
+    "mp4":  "video/mp4",
+    "mkv":  "video/x-matroska",
+    "webm": "video/webm",
+    "mp3":  "audio/mpeg",
+    "aac":  "audio/aac",
+    "m4a":  "audio/mp4",
+    "flac": "audio/flac",
+    "opus": "audio/ogg",
+    "wav":  "audio/wav",
+    "ogg":  "audio/ogg",
+}
+
+
+def _hidden_list() -> list[str]:
+    with _hidden_lock:
+        try:
+            if HIDDEN_FILE.exists():
+                return json.loads(HIDDEN_FILE.read_text())
+        except Exception:
+            pass
+        return []
+
+
+def _hidden_add(name: str):
+    with _hidden_lock:
+        try:
+            hidden = json.loads(HIDDEN_FILE.read_text()) if HIDDEN_FILE.exists() else []
+        except Exception:
+            hidden = []
+        if name not in hidden:
+            hidden.append(name)
+        HIDDEN_FILE.write_text(json.dumps(hidden))
 
 
 def _build_format_args(quality: str, fmt: str) -> list[str]:
@@ -50,18 +88,24 @@ def _js_runtime_args():
     return []
 
 
-def run_download(job_id: str, url: str, quality: str, fmt: str, no_playlist: bool = False):
+def run_download(job_id: str, url: str, quality: str, fmt: str,
+                 no_playlist: bool = False, embed_subs: bool = False):
     q = jobs[job_id]["queue"]
 
     def emit(event: str, data: dict):
         q.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
 
     playlist_flag = ["--no-playlist"] if no_playlist else []
+    sub_flags = ["--write-subs", "--embed-subs"] if embed_subs else []
+    cookies_flags = ["--cookies", str(COOKIES_FILE.resolve())] if COOKIES_FILE.exists() else []
+
     cmd = [
         "yt-dlp", "--newline", "--progress",
         *_js_runtime_args(),
         *_build_format_args(quality, fmt),
         *playlist_flag,
+        *sub_flags,
+        *cookies_flags,
         "-o", str(DOWNLOADS_DIR / "%(title)s.%(ext)s"),
         url,
     ]
@@ -114,6 +158,21 @@ def run_download(job_id: str, url: str, quality: str, fmt: str, no_playlist: boo
         q.put(None)  # sentinel
 
 
+def _parse_range(header: str, file_size: int) -> tuple[int, int]:
+    """Returns (start, end) byte positions, inclusive."""
+    m = re.match(r"bytes=(\d*)-(\d*)", header)
+    if not m:
+        return 0, file_size - 1
+    s, e = m.group(1), m.group(2)
+    if s and e:
+        return max(0, int(s)), min(file_size - 1, int(e))
+    elif s:
+        return max(0, int(s)), file_size - 1
+    elif e:
+        return max(0, file_size - int(e)), file_size - 1
+    return 0, file_size - 1
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # silence default per-request log
@@ -125,6 +184,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _resolve_download_path(self, raw: str):
+        """Resolve a filename to a safe path inside DOWNLOADS_DIR, or return None."""
+        filepath = (DOWNLOADS_DIR / raw).resolve()
+        try:
+            filepath.relative_to(DOWNLOADS_DIR.resolve())
+        except ValueError:
+            return None
+        return filepath
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -143,6 +211,12 @@ class Handler(BaseHTTPRequestHandler):
                 if f.is_file()
             ]
             self.send_json(files)
+
+        elif path == "/api/hidden":
+            self.send_json({"hidden": _hidden_list()})
+
+        elif path == "/api/cookies":
+            self.send_json({"active": COOKIES_FILE.exists()})
 
         elif path.startswith("/api/progress/"):
             job_id = path[len("/api/progress/"):]
@@ -171,12 +245,57 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
+        elif path.startswith("/stream/"):
+            filename = unquote(path[len("/stream/"):])
+            filepath = self._resolve_download_path(filename)
+            if filepath is None:
+                self.send_json({"error": "Forbidden"}, 403)
+                return
+            if not filepath.is_file():
+                self.send_json({"error": "Not found"}, 404)
+                return
+            ext = filepath.suffix.lstrip(".").lower()
+            mime = _MIME_TYPES.get(ext, "application/octet-stream")
+            file_size = filepath.stat().st_size
+            range_header = self.headers.get("Range")
+            if range_header:
+                start, end = _parse_range(range_header, file_size)
+                length = end - start + 1
+                self.send_response(206)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+                self.send_header("Content-Length", str(length))
+                self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+                with open(filepath, "rb") as fh:
+                    fh.seek(start)
+                    remaining = length
+                    try:
+                        while remaining > 0:
+                            chunk = fh.read(min(65536, remaining))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+                with open(filepath, "rb") as fh:
+                    try:
+                        while chunk := fh.read(65536):
+                            self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+
         elif path.startswith("/downloads/"):
             filename = unquote(path[len("/downloads/"):])
-            filepath = (DOWNLOADS_DIR / filename).resolve()
-            try:
-                filepath.relative_to(DOWNLOADS_DIR.resolve())
-            except ValueError:
+            filepath = self._resolve_download_path(filename)
+            if filepath is None:
                 self.send_json({"error": "Forbidden"}, 403)
                 return
             if not filepath.is_file():
@@ -199,21 +318,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        length = int(self.headers.get("Content-Length", 0))
 
         if path == "/api/download":
-            length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length))
             url = (body.get("url") or "").strip()
             quality = body.get("quality", "best")
             fmt = body.get("format", "mp4")
             no_playlist = bool(body.get("no_playlist", False))
+            embed_subs = bool(body.get("embed_subs", False))
             if not url:
                 self.send_json({"error": "URL is required"}, 400)
                 return
             job_id = str(uuid.uuid4())
             jobs[job_id] = {"queue": queue.Queue(), "cancelled": False}
             threading.Thread(
-                target=run_download, args=(job_id, url, quality, fmt, no_playlist), daemon=True
+                target=run_download,
+                args=(job_id, url, quality, fmt, no_playlist, embed_subs),
+                daemon=True,
             ).start()
             self.send_json({"job_id": job_id})
 
@@ -228,18 +350,34 @@ class Handler(BaseHTTPRequestHandler):
                 proc.terminate()
             self.send_json({"ok": True})
 
+        elif path == "/api/cookies":
+            body = json.loads(self.rfile.read(length))
+            content = body.get("content", "")
+            if not content.strip():
+                self.send_json({"error": "Empty content"}, 400)
+                return
+            COOKIES_FILE.write_text(content)
+            self.send_json({"ok": True})
+
+        elif path == "/api/hidden":
+            body = json.loads(self.rfile.read(length))
+            name = body.get("name", "")
+            if not name:
+                self.send_json({"error": "name required"}, 400)
+                return
+            _hidden_add(name)
+            self.send_json({"ok": True})
+
         else:
             self.send_json({"error": "Not found"}, 404)
 
-
     def do_DELETE(self):
         path = urlparse(self.path).path
+
         if path.startswith("/api/files/"):
             filename = unquote(path[len("/api/files/"):])
-            filepath = (DOWNLOADS_DIR / filename).resolve()
-            try:
-                filepath.relative_to(DOWNLOADS_DIR.resolve())
-            except ValueError:
+            filepath = self._resolve_download_path(filename)
+            if filepath is None:
                 self.send_json({"error": "Forbidden"}, 403)
                 return
             if not filepath.is_file():
@@ -247,6 +385,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             filepath.unlink()
             self.send_json({"ok": True})
+
+        elif path == "/api/cookies":
+            if COOKIES_FILE.exists():
+                COOKIES_FILE.unlink()
+            self.send_json({"ok": True})
+
         else:
             self.send_json({"error": "Not found"}, 404)
 
