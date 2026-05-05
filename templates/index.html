@@ -526,6 +526,10 @@
       <input type="checkbox" id="embed-subs" />
       Subtitles (download &amp; embed into file)
     </label>
+    <label class="checkbox-row" for="auto-delete">
+      <input type="checkbox" id="auto-delete" />
+      Auto-delete from server after saving
+    </label>
     <div class="input-row" style="margin-bottom:14px;gap:10px">
       <div style="flex:1;min-width:0">
         <label for="quality-select" style="margin-bottom:6px">Quality</label>
@@ -831,6 +835,22 @@
         dlLink.className = "dl-btn";
         dlLink.download = f.name;
         dlLink.textContent = "Save";
+        dlLink.addEventListener("click", async (e) => {
+          if (!document.getElementById("auto-delete").checked) return;
+          // Let the browser navigate to trigger the download, then delete server-side.
+          // Use a short delay so the browser has time to begin receiving the file.
+          setTimeout(async () => {
+            try {
+              const res = await fetch(`/api/files/${encodeURIComponent(f.name)}`, { method: "DELETE" });
+              if (res.ok) {
+                li.remove();
+                if (!document.getElementById("file-list").children.length) {
+                  document.getElementById("empty-msg").style.display = "block";
+                }
+              }
+            } catch (_) {}
+          }, 2000);
+        });
         li.appendChild(dlLink);
 
         const delBtn = document.createElement("button");

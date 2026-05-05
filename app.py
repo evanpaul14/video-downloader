@@ -304,16 +304,23 @@ class Handler(BaseHTTPRequestHandler):
             if not filepath.is_file():
                 self.send_json({"error": "Not found"}, 404)
                 return
+            import re as _re
+            _cue_timing = _re.compile(r"(\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3})(.*)")
+            raw = filepath.read_text(encoding="utf-8", errors="replace")
+            def _inject_align(m):
+                timing, settings = m.group(1), m.group(2)
+                if "align:" not in settings:
+                    settings = settings.rstrip() + " align:center"
+                return timing + settings
+            rewritten = _cue_timing.sub(_inject_align, raw).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/vtt; charset=utf-8")
-            self.send_header("Content-Length", str(filepath.stat().st_size))
+            self.send_header("Content-Length", str(len(rewritten)))
             self.end_headers()
-            with open(filepath, "rb") as fh:
-                try:
-                    while chunk := fh.read(65536):
-                        self.wfile.write(chunk)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+            try:
+                self.wfile.write(rewritten)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         elif path.startswith("/downloads/"):
             filename = unquote(path[len("/downloads/"):])

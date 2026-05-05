@@ -22,10 +22,10 @@ Open **http://localhost:5000** in your browser.
 - **Quality selection** — Best, 4K, 1080p, 720p, 480p, 360p, or audio-only
 - **Container formats** — MP4, MKV, WebM (video) · MP3, AAC, M4A, FLAC (audio)
 - **Playlist support** — download full playlists or force single-video mode
-- **English subtitles** — downloads and embeds English subtitles (manual + auto-generated); shown in the in-browser player with YouTube-style styling
+- **English subtitles** — downloads and embeds English subtitles (manual + auto-generated); shown in the in-browser player with YouTube-style styling, center-aligned
 - **In-browser player** — stream any downloaded file directly; video and audio supported
 - **Cookies** — paste a `cookies.txt` to access age-restricted or member-only content
-- **File management** — download, delete, or hide files from the list; live progress with cancel support
+- **File management** — download, delete, or hide files from the list; live progress with cancel support; optional auto-delete from server after saving to your browser
 
 ## Usage
 
