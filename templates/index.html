@@ -235,6 +235,33 @@
 
     .del-btn:hover { border-color: var(--error); background: rgba(248,113,113,.1); opacity: 1; }
 
+    .hide-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .hide-btn:hover { color: var(--text); background: var(--border); opacity: 1; }
+
+    .file-ext {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      background: rgba(167,139,250,.12);
+      border: 1px solid rgba(167,139,250,.25);
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
+
     #empty-msg { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
 
     .section-header {
@@ -371,6 +398,7 @@
   <script>
     let currentSource = null;
     let currentJobId = null;
+    const hiddenFiles = new Set();
 
     function updateFormatOptions() {
       const quality = document.getElementById("quality-select").value;
@@ -532,15 +560,32 @@
       const list = document.getElementById("file-list");
       const empty = document.getElementById("empty-msg");
       list.innerHTML = "";
-      if (!files.length) { empty.style.display = "block"; return; }
+      const visible = files.filter(f => !hiddenFiles.has(f.name));
+      if (!visible.length) { empty.style.display = "block"; return; }
       empty.style.display = "none";
-      files.forEach(f => {
+      visible.forEach(f => {
+        const dotIdx = f.name.lastIndexOf(".");
+        const ext = dotIdx !== -1 ? f.name.slice(dotIdx + 1).toUpperCase() : "";
         const li = document.createElement("li");
-        li.innerHTML = `
+
+        const hideBtn = document.createElement("button");
+        hideBtn.className = "hide-btn";
+        hideBtn.title = "Hide from list";
+        hideBtn.textContent = "×";
+        hideBtn.addEventListener("click", () => {
+          hiddenFiles.add(f.name);
+          li.remove();
+          if (!list.children.length) document.getElementById("empty-msg").style.display = "block";
+        });
+
+        li.appendChild(hideBtn);
+        li.insertAdjacentHTML("beforeend", `
           <span class="file-name" title="${esc(f.name)}">${esc(f.name)}</span>
+          ${ext ? `<span class="file-ext">${esc(ext)}</span>` : ""}
           <span class="file-size">${fmtBytes(f.size)}</span>
           <a href="/downloads/${encodeURIComponent(f.name)}" class="dl-btn" download>Save</a>
-        `;
+        `);
+
         const delBtn = document.createElement("button");
         delBtn.className = "del-btn";
         delBtn.textContent = "Delete";

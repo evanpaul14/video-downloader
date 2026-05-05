@@ -77,7 +77,7 @@ def run_download(job_id: str, url: str, quality: str, fmt: str, no_playlist: boo
             if jobs[job_id].get("cancelled"):
                 break
             line = line.strip()
-            m = re.search(r"(\d+\.?\d*)%\s+of\s+([\d\.]+\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)", line)
+            m = re.search(r"(\d+\.?\d*)%\s+of\s+~?\s*([\d\.]+\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)", line)
             if m:
                 emit("progress", {
                     "percent": float(m.group(1)),
