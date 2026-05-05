@@ -492,6 +492,17 @@
       outline: none;
       max-height: 65vh;
     }
+
+    ::cue {
+      background-color: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      font-family: "YouTube Noto", Roboto, Arial, sans-serif;
+      font-size: 1em;
+      line-height: 1.4;
+      padding: 0.1em 0.35em;
+      border-radius: 2px;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
@@ -810,7 +821,7 @@
           const playBtn = document.createElement("button");
           playBtn.className = "play-btn";
           playBtn.textContent = "Play";
-          playBtn.addEventListener("click", () => openPlayer(f.name, ext));
+          playBtn.addEventListener("click", () => openPlayer(f.name, ext, f.subtitle));
           li.appendChild(playBtn);
         }
 
@@ -850,13 +861,16 @@
     }
 
     // ── Media player ─────────────────────────────────────────────────────────
-    function openPlayer(name, ext) {
+    function openPlayer(name, ext, subtitle) {
       const src = `/stream/${encodeURIComponent(name)}`;
+      const trackEl = subtitle
+        ? `<track kind="subtitles" src="/subtitles/${encodeURIComponent(subtitle)}" srclang="en" label="English" default>`
+        : "";
       const container = document.getElementById("player-container");
       if (AUDIO_EXTS.has(ext)) {
-        container.innerHTML = `<audio controls autoplay><source src="${src}"></audio>`;
+        container.innerHTML = `<audio controls autoplay><source src="${src}">${trackEl}</audio>`;
       } else {
-        container.innerHTML = `<video controls autoplay><source src="${src}"></video>`;
+        container.innerHTML = `<video controls autoplay><source src="${src}">${trackEl}</video>`;
       }
       document.getElementById("player-title").textContent = name;
       document.getElementById("player-modal").classList.add("open");

@@ -96,7 +96,7 @@ def run_download(job_id: str, url: str, quality: str, fmt: str,
         q.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
 
     playlist_flag = ["--no-playlist"] if no_playlist else []
-    sub_flags = ["--write-subs", "--write-auto-subs", "--sub-langs", "en", "--convert-subs", "srt", "--embed-subs"] if embed_subs else []
+    sub_flags = ["--write-subs", "--write-auto-subs", "--sub-langs", "en", "--convert-subs", "vtt", "--embed-subs"] if embed_subs else []
     cookies_flags = ["--cookies", str(COOKIES_FILE.resolve())] if COOKIES_FILE.exists() else []
 
     cmd = [
@@ -205,11 +205,14 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(TEMPLATE)
 
         elif path == "/api/files":
-            files = [
-                {"name": f.name, "size": f.stat().st_size}
-                for f in sorted(DOWNLOADS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)
-                if f.is_file()
-            ]
+            _sub_exts = {".vtt", ".srt"}
+            files = []
+            for f in sorted(DOWNLOADS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+                if not f.is_file() or f.suffix.lower() in _sub_exts:
+                    continue
+                sub = DOWNLOADS_DIR / f"{f.stem}.en.vtt"
+                files.append({"name": f.name, "size": f.stat().st_size,
+                               "subtitle": sub.name if sub.exists() else None})
             self.send_json(files)
 
         elif path == "/api/hidden":
@@ -291,6 +294,26 @@ class Handler(BaseHTTPRequestHandler):
                             self.wfile.write(chunk)
                     except (BrokenPipeError, ConnectionResetError):
                         pass
+
+        elif path.startswith("/subtitles/"):
+            filename = unquote(path[len("/subtitles/"):])
+            filepath = self._resolve_download_path(filename)
+            if filepath is None:
+                self.send_json({"error": "Forbidden"}, 403)
+                return
+            if not filepath.is_file():
+                self.send_json({"error": "Not found"}, 404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/vtt; charset=utf-8")
+            self.send_header("Content-Length", str(filepath.stat().st_size))
+            self.end_headers()
+            with open(filepath, "rb") as fh:
+                try:
+                    while chunk := fh.read(65536):
+                        self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
         elif path.startswith("/downloads/"):
             filename = unquote(path[len("/downloads/"):])
