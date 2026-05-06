@@ -530,6 +530,10 @@
       <input type="checkbox" id="auto-delete" />
       Auto-delete from server after saving
     </label>
+    <label class="checkbox-row" id="stream-row" for="stream-to-client" style="display:none">
+      <input type="checkbox" id="stream-to-client" />
+      Stream directly to device (no server storage)
+    </label>
     <div class="input-row" style="margin-bottom:14px;gap:10px">
       <div style="flex:1;min-width:0">
         <label for="quality-select" style="margin-bottom:6px">Quality</label>
@@ -625,11 +629,15 @@
       const quality = document.getElementById("quality-select").value;
       const sel = document.getElementById("format-select");
       const prev = sel.value;
+      const streamRow = document.getElementById("stream-row");
       if (quality === "audio") {
         sel.innerHTML = '<option value="mp3">MP3</option><option value="aac">AAC</option><option value="m4a">M4A</option><option value="flac">FLAC</option>';
+        streamRow.style.display = "flex";
       } else {
         sel.innerHTML = '<option value="mp4">MP4</option><option value="mkv">MKV</option><option value="webm">WebM</option>';
         if (sel.querySelector(`option[value="${prev}"]`)) sel.value = prev;
+        streamRow.style.display = "none";
+        document.getElementById("stream-to-client").checked = false;
       }
     }
 
@@ -642,7 +650,29 @@
       const fmt = document.getElementById("format-select").value;
       const noPlaylist = document.getElementById("no-playlist").checked;
       const embedSubs = document.getElementById("embed-subs").checked;
+      const streamToClient = document.getElementById("stream-to-client").checked;
       const btn = document.getElementById("dl-btn");
+
+      // Domain support pre-check — warn before touching any other UI
+      try {
+        const checkRes = await fetch(`/api/check-url?url=${encodeURIComponent(url)}`);
+        const checkData = await checkRes.json();
+        if (checkData.error) { alert(checkData.error); return; }
+        if (checkData.warning) {
+          if (!confirm(checkData.warning + "\n\nTry anyway?")) return;
+        }
+      } catch (_) { /* network hiccup — let the download attempt give the real error */ }
+
+      if (streamToClient && quality === "audio") {
+        const params = new URLSearchParams({ url, quality, format: fmt });
+        if (noPlaylist) params.set("no_playlist", "1");
+        const a = document.createElement("a");
+        a.href = `/api/stream-to-client?${params}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
       const stopBtn = document.getElementById("stop-btn");
 
       btn.disabled = true;

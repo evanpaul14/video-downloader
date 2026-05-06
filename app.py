@@ -8,7 +8,7 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 DOWNLOADS_DIR = Path("downloads")
 DOWNLOADS_DIR.mkdir(exist_ok=True)
@@ -44,6 +44,61 @@ _MIME_TYPES = {
     "wav":  "audio/wav",
     "ogg":  "audio/ogg",
 }
+
+# Domains that yt-dlp supports under a different extractor name than the hostname implies.
+_DOMAIN_ALIASES: dict[str, str] = {
+    "youtu.be":  "youtube",
+    "x.com":     "twitter",
+    "fb.watch":  "facebook",
+    "fb.me":     "facebook",
+    "vm.tiktok.com": "tiktok",
+}
+
+# TLD/infrastructure labels that should never count as a site name match.
+_STOP_LABELS = frozenset({
+    "www", "com", "net", "org", "edu", "gov", "io",
+    "tv", "co", "uk", "au", "de", "fr", "jp", "ca",
+    "br", "ru", "cn", "in", "me", "us",
+})
+
+
+def _load_supported_extractors() -> frozenset[str]:
+    try:
+        r = subprocess.run(
+            ["yt-dlp", "--list-extractors"],
+            capture_output=True, text=True, timeout=10,
+        )
+        names: set[str] = set()
+        for line in r.stdout.splitlines():
+            # Strip "(CURRENTLY BROKEN)" annotations, take base name before ":"
+            base = line.strip().lower().split("(")[0].split(":")[0].strip()
+            if base and base != "generic" and len(base) >= 3:
+                names.add(base)
+        return frozenset(names)
+    except Exception:
+        return frozenset()
+
+
+SUPPORTED_EXTRACTORS = _load_supported_extractors()
+
+
+def _is_supported_url(url: str) -> bool:
+    """Return False only when we're confident yt-dlp has no extractor for this host."""
+    if not SUPPORTED_EXTRACTORS:
+        return True  # yt-dlp unavailable at startup; skip check
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+        # Check alias table for rebranded / shortened domains
+        if hostname in _DOMAIN_ALIASES:
+            return _DOMAIN_ALIASES[hostname] in SUPPORTED_EXTRACTORS
+        host = hostname.removeprefix("www.")
+        parts = [p for p in host.split(".") if len(p) >= 3 and p not in _STOP_LABELS]
+        if not parts:
+            return False
+        # Match if any hostname label is a substring of an extractor name or vice-versa
+        return any(p in ext or ext in p for p in parts for ext in SUPPORTED_EXTRACTORS)
+    except Exception:
+        return True  # Malformed URL; let yt-dlp give the real error
 
 
 def _hidden_list() -> list[str]:
@@ -215,6 +270,18 @@ class Handler(BaseHTTPRequestHandler):
                                "subtitle": sub.name if sub.exists() else None})
             self.send_json(files)
 
+        elif path == "/api/check-url":
+            params = parse_qs(urlparse(self.path).query)
+            url = unquote(params.get("url", [""])[0]).strip()
+            if not url:
+                self.send_json({"error": "URL required"}, 400)
+                return
+            if _is_supported_url(url):
+                self.send_json({"ok": True})
+            else:
+                host = urlparse(url).hostname or url
+                self.send_json({"warning": f"{host} is not in yt-dlp’s supported sites list — yt-dlp may still work via its generic extractor"})
+
         elif path == "/api/hidden":
             self.send_json({"hidden": _hidden_list()})
 
@@ -342,6 +409,60 @@ class Handler(BaseHTTPRequestHandler):
                         self.wfile.write(chunk)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
+
+        elif path == "/api/stream-to-client":
+            params = parse_qs(urlparse(self.path).query)
+            url = unquote(params.get("url", [""])[0]).strip()
+            quality = params.get("quality", ["audio"])[0]
+            fmt = params.get("format", ["mp3"])[0]
+            no_playlist = params.get("no_playlist", [""])[0] == "1"
+
+            if quality != "audio":
+                self.send_json({"error": "Streaming to client only supported for audio"}, 400)
+                return
+            if not url:
+                self.send_json({"error": "URL required"}, 400)
+                return
+
+            audio_fmt = fmt if fmt in _AUDIO_FORMATS else "mp3"
+            mime = _MIME_TYPES.get(audio_fmt, "application/octet-stream")
+            playlist_flag = ["--no-playlist"] if no_playlist else []
+            cookies_flags = ["--cookies", str(COOKIES_FILE.resolve())] if COOKIES_FILE.exists() else []
+
+            cmd = [
+                "yt-dlp",
+                *_js_runtime_args(),
+                "-f", "bestaudio/best",
+                "-x", "--audio-format", audio_fmt,
+                *playlist_flag,
+                *cookies_flags,
+                "-o", "-",
+                url,
+            ]
+
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                # Read first chunk before committing headers so we can still return an error
+                first_chunk = proc.stdout.read(65536)
+                if not first_chunk:
+                    proc.wait()
+                    self.send_json({"error": "yt-dlp produced no output — check the URL or try again"}, 502)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Disposition", f'attachment; filename="audio.{audio_fmt}"')
+                self.end_headers()
+                try:
+                    self.wfile.write(first_chunk)
+                    while chunk := proc.stdout.read(65536):
+                        self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    proc.terminate()
+                proc.wait()
+            except FileNotFoundError:
+                self.send_json({"error": "yt-dlp not found — run: pip install yt-dlp"}, 500)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
 
         else:
             self.send_json({"error": "Not found"}, 404)
