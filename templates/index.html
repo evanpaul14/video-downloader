@@ -552,9 +552,9 @@
       <input type="checkbox" id="auto-delete" />
       Auto-delete from server after saving
     </label>
-    <label class="checkbox-row" id="stream-row" for="stream-to-client" style="display:none">
+    <label class="checkbox-row" id="stream-row" for="stream-to-client">
       <input type="checkbox" id="stream-to-client" />
-      Stream directly to device (no server storage)
+      Download directly to device (no server storage)
     </label>
     <div class="input-row" style="margin-bottom:14px;gap:10px">
       <div style="flex:1;min-width:0">
@@ -661,15 +661,11 @@
       const quality = document.getElementById("quality-select").value;
       const sel = document.getElementById("format-select");
       const prev = sel.value;
-      const streamRow = document.getElementById("stream-row");
       if (quality === "audio") {
         sel.innerHTML = '<option value="mp3">MP3</option><option value="aac">AAC</option><option value="m4a">M4A</option><option value="flac">FLAC</option>';
-        streamRow.style.display = "flex";
       } else {
         sel.innerHTML = '<option value="mp4">MP4</option><option value="mkv">MKV</option><option value="webm">WebM</option>';
         if (sel.querySelector(`option[value="${prev}"]`)) sel.value = prev;
-        streamRow.style.display = "none";
-        document.getElementById("stream-to-client").checked = false;
       }
     }
 
@@ -695,7 +691,7 @@
         }
       } catch (_) { /* network hiccup — let the download attempt give the real error */ }
 
-      if (streamToClient && quality === "audio") {
+      if (streamToClient) {
         const params = new URLSearchParams({ url, quality, format: fmt });
         if (noPlaylist) params.set("no_playlist", "1");
         const a = document.createElement("a");

@@ -4,6 +4,7 @@ import queue
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -413,52 +414,47 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/stream-to-client":
             params = parse_qs(urlparse(self.path).query)
             url = unquote(params.get("url", [""])[0]).strip()
-            quality = params.get("quality", ["audio"])[0]
-            fmt = params.get("format", ["mp3"])[0]
+            quality = params.get("quality", ["best"])[0]
+            fmt = params.get("format", ["mp4"])[0]
             no_playlist = params.get("no_playlist", [""])[0] == "1"
 
-            if quality != "audio":
-                self.send_json({"error": "Streaming to client only supported for audio"}, 400)
-                return
             if not url:
                 self.send_json({"error": "URL required"}, 400)
                 return
 
-            audio_fmt = fmt if fmt in _AUDIO_FORMATS else "mp3"
-            mime = _MIME_TYPES.get(audio_fmt, "application/octet-stream")
             playlist_flag = ["--no-playlist"] if no_playlist else []
             cookies_flags = ["--cookies", str(COOKIES_FILE.resolve())] if COOKIES_FILE.exists() else []
 
-            cmd = [
-                "yt-dlp",
-                *_js_runtime_args(),
-                "-f", "bestaudio/best",
-                "-x", "--audio-format", audio_fmt,
-                *playlist_flag,
-                *cookies_flags,
-                "-o", "-",
-                url,
-            ]
-
             try:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-                # Read first chunk before committing headers so we can still return an error
-                first_chunk = proc.stdout.read(65536)
-                if not first_chunk:
-                    proc.wait()
-                    self.send_json({"error": "yt-dlp produced no output — check the URL or try again"}, 502)
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", mime)
-                self.send_header("Content-Disposition", f'attachment; filename="audio.{audio_fmt}"')
-                self.end_headers()
-                try:
-                    self.wfile.write(first_chunk)
-                    while chunk := proc.stdout.read(65536):
-                        self.wfile.write(chunk)
-                except (BrokenPipeError, ConnectionResetError):
-                    proc.terminate()
-                proc.wait()
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    cmd = [
+                        "yt-dlp",
+                        *_js_runtime_args(),
+                        *_build_format_args(quality, fmt),
+                        *playlist_flag,
+                        *cookies_flags,
+                        "-o", os.path.join(tmpdir, "%(title)s.%(ext)s"),
+                        url,
+                    ]
+                    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    files = list(Path(tmpdir).iterdir())
+                    if result.returncode != 0 or not files:
+                        self.send_json({"error": "yt-dlp failed — check the URL or try again"}, 502)
+                        return
+                    out_file = files[0]
+                    actual_mime = _MIME_TYPES.get(out_file.suffix.lstrip("."), "application/octet-stream")
+                    file_size = out_file.stat().st_size
+                    self.send_response(200)
+                    self.send_header("Content-Type", actual_mime)
+                    self.send_header("Content-Length", str(file_size))
+                    self.send_header("Content-Disposition", f'attachment; filename="{out_file.name}"')
+                    self.end_headers()
+                    try:
+                        with open(out_file, "rb") as f:
+                            while chunk := f.read(65536):
+                                self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
             except FileNotFoundError:
                 self.send_json({"error": "yt-dlp not found — run: pip install yt-dlp"}, 500)
             except Exception as e:
