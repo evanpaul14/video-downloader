@@ -504,9 +504,31 @@
       white-space: pre-wrap;
       text-align: center;
     }
+    #toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #1e1e2e;
+      border: 1px solid var(--accent);
+      color: var(--text);
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      white-space: nowrap;
+      z-index: 9999;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
   </style>
 </head>
 <body>
+  <div id="toast"></div>
   <header>
     <h1>Video Downloader</h1>
     <p>Powered by yt-dlp &mdash; saves to your server&rsquo;s downloads folder</p>
@@ -624,6 +646,16 @@
     const AUDIO_EXTS = new Set(["mp3", "aac", "m4a", "flac", "opus", "wav", "ogg"]);
     const PLAYABLE_EXTS = new Set(["mp4", "webm", "mp3", "aac", "m4a", "flac", "opus", "wav", "ogg"]);
 
+    // ── Toast ────────────────────────────────────────────────────────────────
+    let _toastTimer = null;
+    function showToast(msg, duration = 3000) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => el.classList.remove("show"), duration);
+    }
+
     // ── Format options ───────────────────────────────────────────────────────
     function updateFormatOptions() {
       const quality = document.getElementById("quality-select").value;
@@ -671,6 +703,7 @@
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+        showToast("Download started — check your browser's downloads");
         return;
       }
       const stopBtn = document.getElementById("stop-btn");
