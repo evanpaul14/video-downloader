@@ -662,7 +662,7 @@
       const sel = document.getElementById("format-select");
       const prev = sel.value;
       if (quality === "audio") {
-        sel.innerHTML = '<option value="mp3">MP3</option><option value="aac">AAC</option><option value="m4a">M4A</option><option value="flac">FLAC</option>';
+        sel.innerHTML = '<option value="best">Original (no re-encode)</option><option value="mp3">MP3</option><option value="aac">AAC</option><option value="m4a">M4A</option><option value="flac">FLAC</option>';
       } else {
         sel.innerHTML = '<option value="mp4">MP4</option><option value="mkv">MKV</option><option value="webm">WebM</option>';
         if (sel.querySelector(`option[value="${prev}"]`)) sel.value = prev;

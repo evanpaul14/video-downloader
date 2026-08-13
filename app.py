@@ -22,14 +22,18 @@ TEMPLATE = (Path(__file__).parent / "templates" / "index.html").read_bytes()
 jobs: dict[str, dict] = {}
 _hidden_lock = threading.Lock()
 
-_VIDEO_QUALITY = {
-    "best": "bestvideo",
-    "4k":   "bestvideo[height<=2160]",
-    "1080": "bestvideo[height<=1080]",
-    "720":  "bestvideo[height<=720]",
-    "480":  "bestvideo[height<=480]",
-    "360":  "bestvideo[height<=360]",
-}
+# Pi 3+ / 1GB RAM: yt-dlp + ffmpeg running concurrently can exhaust memory,
+# so only one download (and its merge/encode step) runs at a time. Others
+# just wait their turn in run_download() rather than being rejected.
+MAX_CONCURRENT_DOWNLOADS = 1
+_download_slot = threading.BoundedSemaphore(MAX_CONCURRENT_DOWNLOADS)
+
+# Job bookkeeping is kept around briefly after completion so late-arriving
+# /api/progress requests still see the final event, then dropped — on 1GB
+# of RAM an unbounded `jobs` dict is a slow leak.
+JOB_TTL_SECONDS = 300
+
+_HEIGHT_CAP = {"4k": 2160, "1080": 1080, "720": 720, "480": 480, "360": 360}
 
 _AUDIO_FORMATS = {"mp3", "aac", "m4a", "flac", "opus"}
 
@@ -125,15 +129,28 @@ def _hidden_add(name: str):
 
 def _build_format_args(quality: str, fmt: str) -> list[str]:
     if quality == "audio":
+        if fmt in ("best", "original"):
+            # No -x/--audio-format: keeps yt-dlp's native container, skipping
+            # ffmpeg re-encoding entirely — much cheaper on a Pi's CPU.
+            return ["-f", "bestaudio/best"]
         audio_fmt = fmt if fmt in _AUDIO_FORMATS else "mp3"
         return ["-f", "bestaudio/best", "-x", "--audio-format", audio_fmt]
-    vf = _VIDEO_QUALITY.get(quality, "bestvideo")
+
+    height = _HEIGHT_CAP.get(quality)
+    hf = f"[height<={height}]" if height else ""
+    # Prefer a single pre-muxed stream (no video+audio merge) when one exists
+    # at the requested quality/container — ffmpeg muxing is slow and memory
+    # hungry on a Pi 3's Cortex-A53 cores, so avoiding it is worth losing a
+    # little quality precision to the fallback chain below.
     if fmt == "webm":
-        return ["-f", f"{vf}[ext=webm]+bestaudio[ext=webm]/best", "--merge-output-format", "webm"]
+        fsel = f"best{hf}[ext=webm]/bestvideo{hf}[ext=webm]+bestaudio[ext=webm]/bestvideo{hf}+bestaudio/best{hf}"
+        return ["-f", fsel, "--merge-output-format", "webm"]
     elif fmt == "mkv":
-        return ["-f", f"{vf}+bestaudio/best", "--merge-output-format", "mkv"]
+        fsel = f"best{hf}/bestvideo{hf}+bestaudio/best{hf}"
+        return ["-f", fsel, "--merge-output-format", "mkv"]
     else:
-        return ["-f", f"{vf}+bestaudio/best", "--merge-output-format", "mp4"]
+        fsel = f"best{hf}[ext=mp4]/bestvideo{hf}[ext=mp4]+bestaudio[ext=m4a]/bestvideo{hf}+bestaudio/best{hf}"
+        return ["-f", fsel, "--merge-output-format", "mp4"]
 
 
 def _js_runtime_args():
@@ -166,7 +183,13 @@ def run_download(job_id: str, url: str, quality: str, fmt: str,
         url,
     ]
 
+    if not _download_slot.acquire(blocking=False):
+        emit("log", {"text": "Waiting for another download to finish (only one runs at a time on this device)…"})
+        _download_slot.acquire()
     try:
+        if jobs[job_id].get("cancelled"):
+            emit("error", {"text": "Download cancelled."})
+            return
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
@@ -211,7 +234,9 @@ def run_download(job_id: str, url: str, quality: str, fmt: str,
     except Exception as e:
         emit("error", {"text": str(e)})
     finally:
+        _download_slot.release()
         q.put(None)  # sentinel
+        threading.Timer(JOB_TTL_SECONDS, jobs.pop, args=(job_id, None)).start()
 
 
 def _parse_range(header: str, file_size: int) -> tuple[int, int]:
@@ -262,12 +287,19 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/files":
             _sub_exts = {".vtt", ".srt"}
+            entries = []
+            with os.scandir(DOWNLOADS_DIR) as it:
+                for e in it:
+                    if not e.is_file() or Path(e.name).suffix.lower() in _sub_exts:
+                        continue
+                    st = e.stat()  # cached by DirEntry — no extra syscall
+                    entries.append((e.name, st.st_size, st.st_mtime))
+            entries.sort(key=lambda t: t[2], reverse=True)
             files = []
-            for f in sorted(DOWNLOADS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-                if not f.is_file() or f.suffix.lower() in _sub_exts:
-                    continue
-                sub = DOWNLOADS_DIR / f"{f.stem}.en.vtt"
-                files.append({"name": f.name, "size": f.stat().st_size,
+            for name, size, _mtime in entries:
+                stem = Path(name).stem
+                sub = DOWNLOADS_DIR / f"{stem}.en.vtt"
+                files.append({"name": name, "size": size,
                                "subtitle": sub.name if sub.exists() else None})
             self.send_json(files)
 
